@@ -38,10 +38,21 @@ class ImageDataset(torch.utils.data.Dataset):
             image = self.transform(image)
         return image
 
+BATCH_SIZE = 4096
+
 train_dataset = ImageDataset(imagenet_train, transform=transform)
 val_dataset = ImageDataset(imagenet_val, transform=transform)
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
+
+train_loader = DataLoader(
+    train_dataset, 
+    batch_size=BATCH_SIZE,
+    shuffle=True
+)
+val_loader = DataLoader(
+    val_dataset, 
+    batch_size=BATCH_SIZE,
+    shuffle=False
+)
 
 class VAE(nn.Module):
     def __init__(self, img_channels=3, latent_dim=128):
@@ -89,26 +100,49 @@ def vae_loss(recon_x, x, mu, logvar):
     return recon_loss + kld
 
 def _mp_fn(index):
+    # Device setup
     device = xm.xla_device()
+    
+    # Model setup
+    model = VAE().train().to(device)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    
+    # Wrap data loader
     mp_device_loader = pl.MpDeviceLoader(train_loader, device)
     
-    model = VAE().train().to(device)
-    optimizer =  optim.Adam(model.parameters(), lr=1e-3)
-
-    train_loss = 0
-    
-    for batch in mp_device_loader: #, desc=f'Epoch {epoch+1}', leave=False):
-        #batch = batch.to(device)
+    # Training loop
+    epochs = 10
+    for epoch in range(epochs):
+        train_loss = 0
+        model.train()
         
-        optimizer.zero_grad()
+        for batch in mp_device_loader:
+            optimizer.zero_grad()
+            
+            recon_batch, mu, logvar = model(batch)  # Use model instead of vae
+            loss = vae_loss(recon_batch, batch, mu, logvar)
+            
+            loss.backward()
+            xm.optimizer_step(optimizer)
+            train_loss += loss.item()
         
-        recon_batch, mu, logvar = model(batch)
-        loss = vae_loss(recon_batch, batch, mu, logvar)
-        
-        loss.backward()
-        train_loss += loss.item()
-        
-        xm.optimizer_step(optimizer)
+        # Print metrics only on master process
+        if xm.is_master_ordinal():
+            avg_loss = train_loss / len(train_loader.dataset)
+            print(f'Epoch {epoch + 1}, Loss: {avg_loss:.4f}')
+            
+            # Save checkpoint
+            checkpoint = {
+                'epoch': epoch + 1,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': avg_loss
+            }
+            xm.save(checkpoint, f"checkpoints/vae_epoch_{epoch+1}.pth")
 
 if __name__ == '__main__':
+    # Create checkpoints directory
+    os.makedirs("checkpoints", exist_ok=True)
+    
+    # Launch training
     torch_xla.launch(_mp_fn, args=())
