@@ -217,7 +217,7 @@ def train():
 
 if __name__ == "__main__":
     # Initialize the sweep
-    sweep_id = wandb.sweep(sweep_config, project="ML_10701_Project", entity="ramith-mit")
+    sweep_id = wandb.sweep(sweep_config, project="DataNoise", entity="ml_10701")
     
     # Start the sweep
     wandb.agent(sweep_id, function=train)  # Run 10 experiments
