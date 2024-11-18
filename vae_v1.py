@@ -20,7 +20,14 @@ wandb.init(
         "batch_size": 256,
         "learning_rate": 1e-3,
         "latent_dim": 128,
-        "img_channels": 3
+        "img_channels": 3,
+            
+        # New noise configurations
+        "noise": {
+            "type": "gaussian",  # or "uniform"
+            "std": 0.1,         # for gaussian
+            "range": 0.2        # for uniform
+        }
     }
 )
 
@@ -51,6 +58,18 @@ class ImageDataset(torch.utils.data.Dataset):
         if self.transform:
             image = self.transform(image)
         return image
+    
+
+def add_noise_forward(batch, config):
+    """Add noise based on wandb config"""
+    if config.noise['type'] == "gaussian":
+        noise = torch.randn_like(batch) * config.noise['std'] 
+    else:  # uniform
+        noise = torch.rand_like(batch) * config.noise['range'] - config.noise['range']/2
+        
+    noisy_batch = batch + noise
+    # Clip values to valid range [-1, 1]
+    return torch.clamp(noisy_batch, -1, 1)
 
 train_dataset = ImageDataset(imagenet_train, transform=transform)
 val_dataset = ImageDataset(imagenet_val, transform=transform)
@@ -120,6 +139,9 @@ for epoch in tqdm(range(config.epochs), desc='Epochs'):
     
     for batch in tqdm(train_loader, desc=f'Epoch {epoch+1}', leave=False):
         batch = batch.to(device)
+
+        # Add noise using config parameters
+        noisy_batch = add_noise_forward(batch, config)
         
         optimizer.zero_grad()
         recon_batch, mu, logvar = vae(batch)
