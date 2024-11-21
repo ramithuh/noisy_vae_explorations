@@ -8,40 +8,6 @@ import os
 import wandb
 from tqdm import tqdm
 
-# Sweep configuration
-sweep_config = {
-    'method': 'grid',
-    'name': 'Noise Type Sweep',
-    'metric': {
-        'name': 'avg_train_loss',
-        'goal': 'minimize'
-    },
-    'parameters': {
-        'architecture': {'value': 'VAE'},
-        'dataset': {'value': 'tiny-imagenet'},
-        'epochs': {'value': 100},
-        'batch_size': {'value': 256},
-        'learning_rate': {'value': 1e-3},
-        'latent_dim': {'value': 128},
-        'img_channels': {'value': 3},
-        'noise_config': {
-            'values': [
-                # Gaussian configurations
-                {'type': 'gaussian', 'std': 0.05},
-                {'type': 'gaussian', 'std': 0.1},
-                {'type': 'gaussian', 'std': 0.15},
-                {'type': 'gaussian', 'std': 0.2},
-                {'type': 'gaussian', 'std': 0.25},
-                # Uniform configurations
-                {'type': 'uniform', 'range': 0.05},
-                {'type': 'uniform', 'range': 0.1},
-                {'type': 'uniform', 'range': 0.15},
-                {'type': 'uniform', 'range': 0.2},
-                {'type': 'uniform', 'range': 0.25}
-            ]
-        }
-    }
-}
 
 class ImageDataset(torch.utils.data.Dataset):
     def __init__(self, dataset, transform=None):
@@ -118,6 +84,53 @@ def vae_loss(recon_x, x, mu, logvar):
     kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     return recon_loss + kld
 
+sweep_config = {
+    'method': 'grid',
+    'name': 'Noise Type Sweep with Seeds',
+    'metric': {
+        'name': 'avg_train_loss',
+        'goal': 'minimize'
+    },
+    'parameters': {
+        'seed': {
+            'values': [42, 123, 456, 789, 101112]  # Multiple seeds to try
+        },
+        'architecture': {'value': 'VAE'},
+        'dataset': {'value': 'tiny-imagenet'},
+        'epochs': {'value': 100},
+        'batch_size': {'value': 256},
+        'learning_rate': {'value': 1e-3},
+        'latent_dim': {'value': 128},
+        'img_channels': {'value': 3},
+        'noise_config': {
+            'values': [
+                # {'type': 'gaussian', 'std': 0.05},
+                # {'type': 'gaussian', 'std': 0.1},
+                # {'type': 'gaussian', 'std': 0.15},
+                # {'type': 'gaussian', 'std': 0.2},
+                # {'type': 'gaussian', 'std': 0.25},
+                # {'type': 'uniform', 'range': 0.05},
+                # {'type': 'uniform', 'range': 0.1},
+                # {'type': 'uniform', 'range': 0.15},
+                # {'type': 'uniform', 'range': 0.2},
+                {'type': 'uniform', 'range': 0.25}
+                # {'type': 'common', 'std': 0.00, 'range': 0.00},
+            ]
+        }
+    }
+}
+
+def set_seed(seed):
+    """Set all random seeds"""
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    import random
+    import numpy as np
+    random.seed(seed)
+    np.random.seed(seed)
 
 
 def train():
@@ -126,17 +139,21 @@ def train():
     
     # Update config with sweep parameters
     config = wandb.config
+
+    # Set the seed for reproducibility
+    set_seed(config.seed)
     
     # Update noise configuration directly from the noise_config parameter
     config.noise = config.noise_config
 
-    # Create experiment-specific directory
+    # Modified experiment directory to include seed
     noise_type = config.noise['type']
     noise_value = config.noise.get('std', config.noise.get('range'))
     experiment_dir = os.path.join(
         'experiments', 
         noise_type,
-        f'value_{noise_value}'
+        f'value_{noise_value}',
+        f'seed_{config.seed}'  # Add seed to path
     )
     checkpoint_dir = os.path.join(experiment_dir, 'checkpoints')
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -217,7 +234,7 @@ def train():
 
 if __name__ == "__main__":
     # Initialize the sweep
-    sweep_id = wandb.sweep(sweep_config, project="DataNoise", entity="ml_10701")
+    sweep_id = wandb.sweep(sweep_config, project="DataNoise_Seeds", entity="ml_10701")
     
     # Start the sweep
     wandb.agent(sweep_id, function=train)  # Run 10 experiments
